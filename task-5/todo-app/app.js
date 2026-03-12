@@ -64,7 +64,7 @@ class TodoApp {
         this.renderTodo(newTodo);
         this.inputElement.value = '';
         this.updateStats();
-        this.saveTodos();
+        this.saveTodos(); // 保存到本地存储
     }
 
     // 标记完成/未完成功能
@@ -74,7 +74,7 @@ class TodoApp {
             todo.completed = !todo.completed;
             this.renderTodo(todo);
             this.updateStats();
-            this.saveTodos();
+            this.saveTodos(); // 保存到本地存储
         }
     }
 
@@ -111,6 +111,8 @@ class TodoApp {
             } else {
                 todoElement.classList.remove('completed');
             }
+            // 更新文本内容以确保转义后的数据显示正确
+            todoElement.querySelector('.todo-text').innerHTML = todo.text;
         } else {
             // 如果元素不存在，则创建新的
             const li = document.createElement('li');
@@ -157,23 +159,33 @@ class TodoApp {
         return div.innerHTML;
     }
 
-    // 保存到本地存储
+    // 保存到本地存储（第6项任务）
     saveTodos() {
-        localStorage.setItem('todos', JSON.stringify(this.todos));
+        try {
+            localStorage.setItem('todos', JSON.stringify(this.todos));
+        } catch (error) {
+            console.error('保存到本地存储失败:', error);
+            alert('本地存储空间不足，请清理浏览器数据后再试');
+        }
     }
 
-    // 从本地存储加载数据
+    // 从本地存储加载数据（第6项任务）
     loadTodos() {
-        const savedTodos = localStorage.getItem('todos');
-        if (savedTodos) {
-            this.todos = JSON.parse(savedTodos);
-            this.todos.forEach(todo => {
-                this.renderTodo(todo);
-            });
-            this.checkEmptyState();
-        } else {
-            // 如果没有保存的数据，显示空状态
-            this.checkEmptyState();
+        try {
+            const savedTodos = localStorage.getItem('todos');
+            if (savedTodos) {
+                this.todos = JSON.parse(savedTodos);
+                this.todos.forEach(todo => {
+                    this.renderTodo(todo);
+                });
+                this.checkEmptyState();
+            } else {
+                // 如果没有保存的数据，显示空状态
+                this.checkEmptyState();
+            }
+        } catch (error) {
+            console.error('从本地存储加载数据失败:', error);
+            this.todos = []; // 重置为空数组以防出错
         }
     }
 }
