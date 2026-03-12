@@ -51,11 +51,11 @@ class TodoApp {
         if (text === '') return;
 
         // 防止XSS攻击，对输入进行转义
-        const escapedText = this.escapeHtml(text);
+        const sanitizedText = this.sanitizeInput(text);
 
         const newTodo = {
             id: Date.now(), // 使用时间戳作为唯一ID
-            text: escapedText,
+            text: sanitizedText,
             completed: false,
             createdAt: new Date()
         };
@@ -111,14 +111,34 @@ class TodoApp {
             } else {
                 todoElement.classList.remove('completed');
             }
-            // 更新文本内容以确保转义后的数据显示正确
-            todoElement.querySelector('.todo-text').innerHTML = todo.text;
+            // 确保文本内容安全地设置，避免innerHTML可能引入的XSS
+            const textElement = todoElement.querySelector('.todo-text');
+            if (textElement) {
+                textElement.textContent = todo.text; // 使用textContent而不是innerHTML来设置纯文本
+            }
         } else {
             // 如果元素不存在，则创建新的
             const li = document.createElement('li');
             li.className = `todo-item ${todo.completed ? 'completed' : ''}`;
             li.dataset.id = todo.id;
-            li.innerHTML = this.createTodoHtml(todo);
+            
+            // 创建待办事项子元素
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'todo-checkbox';
+            checkbox.checked = todo.completed;
+            
+            const textSpan = document.createElement('span');
+            textSpan.className = 'todo-text';
+            textSpan.textContent = todo.text; // 安全地设置文本内容
+            
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = '删除';
+            
+            li.appendChild(checkbox);
+            li.appendChild(textSpan);
+            li.appendChild(deleteBtn);
             
             this.todoList.appendChild(li);
             this.checkEmptyState();
@@ -127,9 +147,10 @@ class TodoApp {
 
     // 创建待办事项HTML结构
     createTodoHtml(todo) {
+        // 返回安全的HTML结构，但注意实际渲染时使用createElement方法更安全
         return `
             <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''}>
-            <span class="todo-text">${todo.text}</span>
+            <span class="todo-text"></span>
             <button class="delete-btn">删除</button>
         `;
     }
@@ -152,11 +173,29 @@ class TodoApp {
         }
     }
 
-    // 防止XSS攻击的HTML转义函数
-    escapeHtml(text) {
+    // 加强版XSS防护：输入净化函数
+    sanitizeInput(input) {
+        // 首先使用DOM API进行基础转义
         const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        div.textContent = input;
+        let escaped = div.innerHTML;
+        
+        // 进一步清理危险字符和脚本相关关键词
+        escaped = escaped
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#x27;')
+            .replace(/\//g, '&#x2F;');
+            
+        // 额外清理JavaScript相关的内容
+        escaped = escaped.replace(/javascript:/gi, '');
+        escaped = escaped.replace(/data:/gi, '');
+        escaped = escaped.replace(/vbscript:/gi, '');
+        escaped = escaped.replace(/on\w+\s*=/gi, '');
+        
+        return escaped;
     }
 
     // 保存到本地存储（第6项任务）
