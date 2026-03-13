@@ -5,6 +5,92 @@ const app = express();
 const port = 3000;
 const WebSocket = require('ws');
 
+// 创建 WebSocket 服务器
+const wss = new WebSocket.Server({ port: 8080 });
+
+// 存储工作者状态的对象
+const workers = {};
+
+// WebSocket 连接处理
+wss.on('connection', (ws) => {
+  console.log('新的 WebSocket 连接建立');
+
+  // 发送当前所有工作者状态给新连接的客户端
+  ws.send(JSON.stringify({
+    type: 'workers_status',
+    data: Object.values(workers)
+  }));
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      
+      if (data.type === 'heartbeat') {
+        // 处理工作者心跳上报
+        const workerId = data.workerId;
+        const timestamp = Date.now();
+        
+        // 更新或创建工作者信息
+        workers[workerId] = {
+          id: workerId,
+          name: data.name || workerId,
+          lastHeartbeat: timestamp,
+          status: 'online',
+          ip: data.ip || 'unknown',
+          timestamp: timestamp
+        };
+        
+        console.log(`收到 ${workerId} 的心跳，时间: ${new Date(timestamp).toLocaleString()}`);
+        
+        // 广播给所有客户端工作者状态变化
+        broadcastWorkersStatus();
+      }
+    } catch (error) {
+      console.error('解析消息时出错:', error);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('WebSocket 连接关闭');
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket 错误:', error);
+  });
+});
+
+// 定期清理不活跃的工作者（30秒没心跳视为离线）
+setInterval(() => {
+  const now = Date.now();
+  const timeoutThreshold = 30000; // 30秒
+  
+  let updated = false;
+  for (const workerId in workers) {
+    if (now - workers[workerId].lastHeartbeat > timeoutThreshold) {
+      console.log(`${workers[workerId].name} 超时，标记为离线`);
+      workers[workerId].status = 'offline';
+    }
+  }
+  
+  if (updated) {
+    broadcastWorkersStatus();
+  }
+}, 10000); // 每10秒检查一次
+
+// 广播工作者状态给所有连接的客户端
+function broadcastWorkersStatus() {
+  const message = JSON.stringify({
+    type: 'workers_status',
+    data: Object.values(workers)
+  });
+  
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
 // 中间件
 app.use(express.json());
 app.use(express.static('.')); // 提供静态文件服务
