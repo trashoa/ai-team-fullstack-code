@@ -1,0 +1,106 @@
+const WebSocket = require('ws');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+// ===== 配置 =====
+const PORT = process.env.WS_PORT || 8080;
+const HTTP_PORT = process.env.HTTP_PORT || 3000;
+
+// ===== 状态存储 =====
+const workers = new Map();
+const clients = new Set();
+
+// ===== HTTP 服务器（服务静态文件）=====
+const httpServer = http.createServer((req, res) => {
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(fs.readFileSync(path.join(__dirname, '../client/dashboard.html')));
+  } else if (req.url === '/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      workers: Array.from(workers.values()),
+      timestamp: Date.now()
+    }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
+
+// ===== WebSocket 服务器 =====
+const wss = new WebSocket.Server({ port: PORT });
+
+wss.on('connection', (ws, req) => {
+  console.log(`[${new Date().toISOString()}] 新连接: ${req.socket.remoteAddress}`);
+  
+  let clientType = 'unknown';
+  
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data);
+      
+      if (msg.type === 'heartbeat') {
+        clientType = 'worker';
+        workers.set(msg.worker, {
+          name: msg.worker,
+          status: 'online',
+          task: msg.task || 'idle',
+          tokens: msg.tokens || 0,
+          lastSeen: Date.now()
+        });
+        // 广播给所有 dashboard 客户端
+        broadcastToDashboards({ type: 'worker_update', workers: Array.from(workers.values()) });
+      } else if (msg.type === 'dashboard_connect') {
+        clientType = 'dashboard';
+        clients.add(ws);
+        // 发送当前状态
+        ws.send(JSON.stringify({
+          type: 'init',
+          workers: Array.from(workers.values())
+        }));
+      }
+    } catch (e) {
+      console.error('消息解析失败:', e.message);
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log(`[${new Date().toISOString()}] 断开: ${clientType}`);
+    if (clientType === 'dashboard') {
+      clients.delete(ws);
+    }
+  });
+});
+
+// ===== 广播函数 =====
+function broadcastToDashboards(data) {
+  const msg = JSON.stringify(data);
+  clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  });
+}
+
+// ===== 启动 HTTP 服务器 =====
+httpServer.listen(HTTP_PORT, () => {
+  console.log(`🚀 Dashboard: http://localhost:${HTTP_PORT}`);
+});
+
+console.log(`📡 WebSocket: ws://localhost:${PORT}`);
+
+// ===== 清理离线 Worker =====
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  workers.forEach((worker, name) => {
+    if (now - worker.lastSeen > 30000) { // 30秒无心跳视为离线
+      worker.status = 'offline';
+      changed = true;
+    }
+  });
+  if (changed) {
+    broadcastToDashboards({ type: 'worker_update', workers: Array.from(workers.values()) });
+  }
+}, 5000);
