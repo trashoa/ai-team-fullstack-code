@@ -14,6 +14,9 @@ const workers = {};
 // 存储当前处理的任务信息
 const currentTasks = {};
 
+// 存储工作者的Token消耗统计
+const tokenUsage = {};
+
 // WebSocket 连接处理
 wss.on('connection', (ws) => {
   console.log('新的 WebSocket 连接建立');
@@ -22,6 +25,12 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify({
     type: 'workers_status',
     data: Object.values(workers)
+  }));
+  
+  // 发送当前Token消耗信息给新连接的客户端
+  ws.send(JSON.stringify({
+    type: 'token_usage',
+    data: tokenUsage
   }));
 
   ws.on('message', (message) => {
@@ -47,6 +56,23 @@ wss.on('connection', (ws) => {
         
         // 广播给所有客户端工作者状态变化
         broadcastWorkersStatus();
+      } else if (data.type === 'token_usage') {
+        // 处理Token消耗上报
+        const workerId = data.workerId;
+        const tokensUsed = data.tokensUsed || 0;
+        const timestamp = Date.now();
+        
+        // 更新Token消耗信息
+        tokenUsage[workerId] = {
+          workerId: workerId,
+          tokensUsed: tokensUsed,
+          timestamp: timestamp
+        };
+        
+        console.log(`收到 ${workerId} 的Token消耗数据: ${tokensUsed}`);
+        
+        // 广播给所有客户端Token消耗变化
+        broadcastTokenUsage();
       }
     } catch (error) {
       console.error('解析消息时出错:', error);
