@@ -27,6 +27,11 @@ function saveTodos() {
     localStorage.setItem('todos', JSON.stringify(todos));
 }
 
+// ===== 根据ID找索引 =====
+function findIndexById(id) {
+    return todos.findIndex(t => t.id === id);
+}
+
 // ===== 渲染 =====
 function render() {
     // 过滤
@@ -39,15 +44,15 @@ function render() {
     // 清空列表
     todoList.innerHTML = '';
 
-    // 渲染
-    filteredTodos.forEach((todo, index) => {
+    // 渲染 - 使用 id 而非索引
+    filteredTodos.forEach((todo) => {
         const li = document.createElement('li');
         li.className = `todo-item${todo.completed ? ' completed' : ''}`;
         
         li.innerHTML = `
-            <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''} data-index="${index}">
+            <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''} data-id="${todo.id}">
             <span class="todo-text">${escapeHtml(todo.text)}</span>
-            <button class="delete-btn" data-index="${index}">删除</button>
+            <button class="delete-btn" data-id="${todo.id}">删除</button>
         `;
         
         todoList.appendChild(li);
@@ -69,6 +74,7 @@ function addTodo() {
     if (!text) return;
     
     todos.push({
+        id: Date.now(), // 唯一ID
         text: text,
         completed: false,
         createdAt: Date.now()
@@ -80,14 +86,18 @@ function addTodo() {
 }
 
 // ===== 切换状态 =====
-function toggleTodo(index) {
+function toggleTodo(id) {
+    const index = findIndexById(id);
+    if (index === -1) return;
     todos[index].completed = !todos[index].completed;
     saveTodos();
     render();
 }
 
 // ===== 删除 =====
-function deleteTodo(index) {
+function deleteTodo(id) {
+    const index = findIndexById(id);
+    if (index === -1) return;
     todos.splice(index, 1);
     saveTodos();
     render();
@@ -100,14 +110,15 @@ todoInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') addTodo();
 });
 
-// 事件委托
+// 事件委托 - 使用 id
 todoList.addEventListener('click', (e) => {
-    const index = parseInt(e.target.dataset.index);
+    const id = parseInt(e.target.dataset.id);
+    if (!id) return;
     
     if (e.target.classList.contains('todo-checkbox')) {
-        toggleTodo(index);
+        toggleTodo(id);
     } else if (e.target.classList.contains('delete-btn')) {
-        deleteTodo(index);
+        deleteTodo(id);
     }
 });
 
