@@ -11,6 +11,9 @@ const wss = new WebSocket.Server({ port: 8080 });
 // 存储工作者状态的对象
 const workers = {};
 
+// 存储当前处理的任务信息
+const currentTasks = {};
+
 // WebSocket 连接处理
 wss.on('connection', (ws) => {
   console.log('新的 WebSocket 连接建立');
