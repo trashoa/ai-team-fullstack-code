@@ -10,11 +10,23 @@ const port = 3000;
 // ============== 安全配置 ==============
 // 1. WebSocket Token 认证
 const WS_SECRET = process.env.WS_SECRET || crypto.randomBytes(32).toString('hex');
-console.log('WebSocket Secret (保存好这个值):', WS_SECRET);
+if (process.env.WS_SECRET) {
+  console.log('✅ 使用环境变量中的 WS_SECRET');
+} else {
+  console.log('⚠️ WS_SECRET 未在环境变量中设置，每次重启将生成新的 secret');
+  console.log('⚠️ 请设置环境变量 WS_SECRET=' + WS_SECRET + ' 以保持一致');
+  console.log('⚠️ 已连接的客户端在重启后会断开，需要重新连接');
+}
 
 // 2. 连接数限制
 const MAX_CONNECTIONS = parseInt(process.env.MAX_CONNECTIONS) || 100;
 const MAX_MESSAGES_PER_MINUTE = 60;
+
+// 2.1 WebSocket 端口配置（支持环境变量）
+const WS_PORT = parseInt(process.env.WS_PORT) || 8080;
+
+// 2.2 内存泄漏防护配置
+const MAX_OFFLINE_AGE = 24 * 60 * 60 * 1000; // 24 小时
 
 // 3. CORS 配置
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'http://localhost:8080'];
@@ -42,6 +54,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 const fs = require('fs');
 const logFile = process.env.LOG_FILE || '/var/log/ai-team-websocket.log';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info'; // debug, info, warn, error
+const MAX_LOG_SIZE = parseInt(process.env.MAX_LOG_SIZE) || 10 * 1024 * 1024; // 10MB
 
 function log(level, message, data = null) {
   const levels = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -65,11 +78,30 @@ function log(level, message, data = null) {
   }
 }
 
+// 日志轮转检查
+function checkLogRotation() {
+  if (!logFile) return;
+  fs.stat(logFile, (err, stats) => {
+    if (err || stats.size < MAX_LOG_SIZE) return;
+    const oldLog = `${logFile}.${Date.now()}.bak`;
+    fs.rename(logFile, oldLog, (renameErr) => {
+      if (renameErr) {
+        log('error', '日志轮转失败', { error: renameErr.message });
+      } else {
+        log('info', '日志已轮转', { oldFile: oldLog, sizeMB: Math.round(stats.size / 1024 / 1024) });
+      }
+    });
+  });
+}
+
+// 每 10 分钟检查一次日志轮转
+setInterval(checkLogRotation, 10 * 60 * 1000);
+
 // ============== WebSocket 服务器 ==============
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({ 
-  port: 8080,
+  port: WS_PORT,
   // 5. 连接验证
   verifyClient: (info, cb) => {
     const url = new URL(info.req.url, `http://${info.req.headers.host}`);
@@ -151,6 +183,11 @@ function validateMessage(data) {
   // 清理输入防止 XSS
   if (data.name && typeof data.name === 'string') {
     data.name = data.name.replace(/[<>"'&]/g, '').substring(0, 50);
+  }
+  
+  // IP 字段验证（新增）
+  if (data.ip && (typeof data.ip !== 'string' || data.ip.length > 100)) {
+    return { valid: false, error: 'ip 格式无效或过长' };
   }
   
   return { valid: true };
@@ -350,8 +387,24 @@ const heartbeatInterval = setInterval(() => {
         now - workers[workerId].lastHeartbeat > HEARTBEAT_TIMEOUT) {
       log('warn', `${workers[workerId].name} 心跳超时，标记为离线`);
       workers[workerId].status = 'offline';
+      workers[workerId].lastDisconnect = now;
       updated = true;
     }
+  }
+  
+  // 内存泄漏清理：删除离线超过 24 小时的工作者
+  let cleaned = 0;
+  for (const workerId in workers) {
+    if (workers[workerId].status === 'offline' && 
+        workers[workerId].lastDisconnect &&
+        now - workers[workerId].lastDisconnect > MAX_OFFLINE_AGE) {
+      delete workers[workerId];
+      delete tokenUsage[workerId];
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    log('info', `清理离线工作者`, { count: cleaned, maxAge: '24h' });
   }
   
   if (updated) {
@@ -405,12 +458,14 @@ app.get('/metrics', (req, res) => {
 
 // 启动 HTTP 服务器
 app.listen(port, () => {
-  log('info', '🦞 AI Team Dashboard 安全版已启动', { port, ws_port: 8080 });
+  log('info', '🦞 AI Team Dashboard 安全版已启动', { port, ws_port: WS_PORT });
   log('info', '安全配置', {
     max_connections: MAX_CONNECTIONS,
     allowed_origins: ALLOWED_ORIGINS,
     log_level: LOG_LEVEL,
-    rate_limit: `${MAX_MESSAGES_PER_MINUTE}/min`
+    rate_limit: `${MAX_MESSAGES_PER_MINUTE}/min`,
+    max_log_size: `${Math.round(MAX_LOG_SIZE / 1024 / 1024)}MB`,
+    max_offline_age: '24h'
   });
 });
 
